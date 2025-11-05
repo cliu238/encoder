@@ -1,0 +1,33 @@
+{
+  "experiment_name": "dann_default",
+
+  "iv5_path": "data/IV5_child_8categories.csv",
+  "phmrc_path": "data/PHMRC_child_8categories.csv",
+
+  "test_size": 0.15,
+  "val_size": 0.15,
+
+  "encoder_hidden": 256,
+  "encoder_output": 128,
+  "embedding_dim": 64,
+  "dropout": 0.3,
+
+  "batch_size": 32,
+  "num_epochs": 100,
+  "learning_rate": 0.001,
+  "weight_decay": 0.0001,
+  "use_balanced_sampling": true,
+
+  "lambda_cls": 1.0,
+  "lambda_adv": 1.0,
+  "lambda_domain": 1.0,
+  "alpha_schedule": "exp",
+
+  "patience": 15,
+
+  "seed": 42,
+  "use_cuda": true,
+  "print_freq": 10,
+
+  "save_dir": "results"
+}

@@ -1,0 +1,34 @@
+{
+  "experiment_name": "dann_quick_test",
+  "comment": "Quick testing configuration - minimal epochs for rapid iteration",
+
+  "iv5_path": "data/IV5_child_8categories.csv",
+  "phmrc_path": "data/PHMRC_child_8categories.csv",
+
+  "test_size": 0.15,
+  "val_size": 0.15,
+
+  "encoder_hidden": 128,
+  "encoder_output": 64,
+  "embedding_dim": 32,
+  "dropout": 0.3,
+
+  "batch_size": 64,
+  "num_epochs": 20,
+  "learning_rate": 0.001,
+  "weight_decay": 0.0001,
+  "use_balanced_sampling": true,
+
+  "lambda_cls": 1.0,
+  "lambda_adv": 1.0,
+  "lambda_domain": 1.0,
+  "alpha_schedule": "linear",
+
+  "patience": 5,
+
+  "seed": 42,
+  "use_cuda": true,
+  "print_freq": 5,
+
+  "save_dir": "results"
+}
