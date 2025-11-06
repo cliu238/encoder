@@ -1,0 +1,41 @@
+{
+  "experiment_name": "ultra_adversarial_v1",
+
+  "comment_data": "Data configuration",
+  "iv5_path": "data/IV5_child_8categories.csv",
+  "phmrc_path": "data/PHMRC_child_8categories.csv",
+  "test_size": 0.15,
+  "val_size": 0.15,
+
+  "comment_architecture": "Same reduced capacity as high_regularization",
+  "encoder_hidden": 128,
+  "encoder_output": 64,
+  "embedding_dim": 32,
+  "dropout": 0.5,
+
+  "comment_training": "Training hyperparameters",
+  "batch_size": 32,
+  "num_epochs": 150,
+  "learning_rate": 0.001,
+  "weight_decay": 0.001,
+  "use_balanced_sampling": true,
+
+  "comment_domain_adaptation": "ULTRA-STRONG adversarial weight to force domain confusion",
+  "lambda_cls": 1.0,
+  "lambda_adv": 5.0,
+  "lambda_domain": 1.0,
+  "alpha_schedule": "const",
+
+  "comment_alpha_schedule": "Using 'const' to apply full adversarial weight from epoch 1",
+
+  "comment_regularization": "Early stopping",
+  "patience": 20,
+
+  "comment_system": "System configuration",
+  "seed": 42,
+  "use_cuda": true,
+  "print_freq": 10,
+
+  "comment_logging": "Logging configuration",
+  "save_dir": "results"
+}

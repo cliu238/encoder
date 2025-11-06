@@ -1,0 +1,6 @@
+[submodule "openva"]
+	path = openva
+	url = https://github.com/verbal-autopsy-software/openVA.git
+[submodule "va-data"]
+	path = va-data
+	url = git@github.com:JH-DSAI/va-data.git

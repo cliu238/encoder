@@ -59,16 +59,28 @@ Both datasets should have a `broader_category` column with labels: `diarrhea`, `
 
 ### Training
 
-Train a DANN model with default hyperparameters:
+**Recommended**: Use the high-regularization config (addresses known overfitting issue):
+
+```bash
+python train.py --config config_high_regularization.json
+```
+
+Or use MMD instead of DANN (more stable for small datasets):
+
+```bash
+python train_mmd.py
+```
+
+Train with default hyperparameters (updated Nov 2025 with stronger regularization):
 
 ```bash
 python train.py
 ```
 
-Train with custom configuration:
+Train with ultra-strong adversarial training:
 
 ```bash
-python train.py --config config/experiment1.json
+python train.py --config config_ultra_adversarial.json
 ```
 
 **Example config.json:**
@@ -192,26 +204,34 @@ encoder/
 
 ## Hyperparameter Guide
 
-### Architecture Hyperparameters
+### ⚠️ IMPORTANT: Known Overfitting Issue
 
-- `encoder_hidden`: 256 (hidden layer size for encoders)
-- `encoder_output`: 128 (encoder output dimension)
-- `embedding_dim`: 64 (shared embedding dimension)
-- `dropout`: 0.3 (dropout rate for regularization)
+**The default DANN architecture tends to overfit on this dataset.** Empirical testing shows:
+- Train domain accuracy stays ~50% (good) but test domain accuracy jumps to 90%+ (bad)
+- Large train-val accuracy gap indicates memorization, not generalization
+- **Root cause**: Model capacity too high for dataset size (3,199 samples)
+
+**Recommended solution**: Use the high-regularization config (`config_high_regularization.json`) or the updated defaults in `train.py` (as of Nov 2025).
+
+### Architecture Hyperparameters (Updated Defaults)
+
+- `encoder_hidden`: 128 (was: 256) - Reduced to prevent overfitting
+- `encoder_output`: 64 (was: 128) - Halved for less capacity
+- `embedding_dim`: 32 (was: 64) - Smaller embedding reduces memorization
+- `dropout`: 0.5 (was: 0.3) - **Increased dramatically** for regularization
 
 ### Training Hyperparameters
 
 - `batch_size`: 32 (larger = more stable gradients, smaller = better generalization)
 - `learning_rate`: 0.001 (use 0.0005-0.002 range)
-- `num_epochs`: 100 (increase to 150 if underfitting)
-- `patience`: 15 (early stopping patience)
+- `num_epochs`: 150 (was: 100) - Smaller model needs more epochs
+- `patience`: 20 (was: 15) - Increased patience for smaller model
+- `weight_decay`: 0.001 (was: 0.0001) - **10x stronger** weight decay
 
 ### Domain Adaptation Hyperparameters
 
 - `lambda_cls`: 1.0 (classification loss weight)
-- `lambda_adv`: 1.0 (adversarial/domain loss weight)
-  - Increase if domain accuracy is high (>0.7)
-  - Decrease if classification accuracy is poor
+- `lambda_adv`: 3.0 (was: 1.0) - **Tripled** to force stronger domain invariance
 - `alpha_schedule`: 'exp' (domain adaptation schedule)
   - 'exp': Slow start, fast ramp-up (recommended)
   - 'linear': Linear increase from 0 to 1
@@ -269,6 +289,77 @@ PHMRC is 76.5% sparse. We use **3-state encoding**:
 
 The network learns that -1 is informative (e.g., "question not applicable" may correlate with age or symptoms).
 
+## Diagnostic Tools
+
+### Monitor Training for Overfitting
+
+Use the monitoring script to track overfitting signals in real-time or analyze completed training:
+
+```bash
+# Analyze a completed training run
+python monitor_training.py results/20251105_161608.json
+
+# Watch training in real-time (updates every 5 seconds)
+python monitor_training.py --watch results/latest.json --interval 5
+```
+
+**Overfitting signals detected:**
+- 🔴 **CRITICAL**: Domain accuracy jump from train to test (e.g., 50% → 90%)
+- 🔴 **CRITICAL**: Test domain accuracy >70% (domain adaptation failed)
+- 🟡 **WARNING**: Train-val accuracy gap >15%
+- 🟡 **WARNING**: Weak adversarial training (train domain accuracy >65%)
+
+### Compare Experiments
+
+Compare two training runs to see the impact of hyperparameter changes:
+
+```bash
+python compare_results.py results/old_config.json results/new_config.json
+```
+
+This shows:
+- Configuration changes with % differences
+- Training metric improvements/regressions
+- Model size reduction
+- Overall assessment with recommendations
+
+### Example: Analyzing the Overfitting Problem
+
+```bash
+# Analyze the original overfitted model
+python monitor_training.py results/20251105_161608.json
+```
+
+Output:
+```
+🔴 Signal: DOMAIN_ACCURACY_JUMP
+   Domain accuracy jumped 39.1% from train (51.1%) to test (90.2%)
+   💡 Recommendation: Model overfitted! Reduce model capacity or increase lambda_adv
+```
+
+This confirmed the overfitting diagnosis and led to the high-regularization config.
+
+## Further Improvements
+
+Three additional approaches have been implemented to further improve performance:
+
+1. **Ultra-Strong Adversarial Training** (`config_ultra_adversarial.json`)
+   - Increases `lambda_adv` from 1.0 → 5.0
+   - Uses constant alpha schedule for maximum adversarial pressure
+   - Best for: When current DANN shows promise but needs stronger domain confusion
+
+2. **MMD Loss** (`train_mmd.py`)
+   - Replaces adversarial training with Maximum Mean Discrepancy
+   - More stable than DANN, especially for small datasets
+   - Best for: When DANN is unstable or you want guaranteed convergence
+
+3. **Data Augmentation** (`src/augmented_dataset.py`)
+   - Feature dropout, Gaussian noise, and binary flipping
+   - Complementary to any approach (DANN or MMD)
+   - Best for: Adding to whichever base approach works best
+
+**See [`IMPROVEMENTS_GUIDE.md`](IMPROVEMENTS_GUIDE.md) for detailed instructions, experimental plan, and usage examples.**
+
 ## Citation
 
 If you use this code, please cite:
@@ -291,3 +382,21 @@ MIT License - See LICENSE file for details
 - DANN architecture based on Ganin et al. (2016) "Domain-Adversarial Training of Neural Networks"
 - IV5 dataset: InterVA-5 verbal autopsy questionnaire
 - PHMRC dataset: Population Health Metrics Research Consortium
+
+## Recent Updates (November 2025)
+
+### Training Results
+- **Best Model**: DANN with high regularization (40.96% validation accuracy)
+- **Domain Invariance**: ✓ Achieved (51.48% domain accuracy ≈ random guessing)
+- **Overfitting**: Reduced from 34% → 21.5% train-val gap
+- **Status**: Model checkpoint available at `results/checkpoints/checkpoint_best.pt`
+
+See `results/FINAL_REPORT.md` for comprehensive analysis.
+
+### Repository Organization
+- **Legacy docs** moved to `docs/archive/`
+- **Training logs** organized in `results/logs/`
+- **Current focus**: High regularization config working well, MMD implementation needs fixes
+
+See `CLEANUP_SUMMARY.md` for details on recent cleanup.
+

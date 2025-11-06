@@ -1,0 +1,39 @@
+{
+  "experiment_name": "high_regularization_v1",
+
+  "comment_data": "Data configuration",
+  "iv5_path": "data/IV5_child_8categories.csv",
+  "phmrc_path": "data/PHMRC_child_8categories.csv",
+  "test_size": 0.15,
+  "val_size": 0.15,
+
+  "comment_architecture": "REDUCED model capacity to prevent overfitting",
+  "encoder_hidden": 128,
+  "encoder_output": 64,
+  "embedding_dim": 32,
+  "dropout": 0.5,
+
+  "comment_training": "Training hyperparameters",
+  "batch_size": 32,
+  "num_epochs": 150,
+  "learning_rate": 0.001,
+  "weight_decay": 0.001,
+  "use_balanced_sampling": true,
+
+  "comment_domain_adaptation": "INCREASED adversarial weight to force stronger domain invariance",
+  "lambda_cls": 1.0,
+  "lambda_adv": 3.0,
+  "lambda_domain": 1.0,
+  "alpha_schedule": "exp",
+
+  "comment_regularization": "Early stopping with more patience for smaller model",
+  "patience": 20,
+
+  "comment_system": "System configuration",
+  "seed": 42,
+  "use_cuda": true,
+  "print_freq": 10,
+
+  "comment_logging": "Logging configuration",
+  "save_dir": "results"
+}

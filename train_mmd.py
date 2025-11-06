@@ -1,15 +1,11 @@
 """
-Training pipeline for Domain-Adversarial Neural Network (DANN).
+Training pipeline for MMD-based domain adaptation.
 
-This script:
-1. Loads and preprocesses IV5 and PHMRC datasets
-2. Creates DANN model with dataset-specific encoders
-3. Trains with combined classification and domain adaptation losses
-4. Validates periodically and saves best model
-5. Logs all metrics for analysis
+This is an alternative to DANN that uses Maximum Mean Discrepancy
+for domain adaptation instead of adversarial training.
 
 Usage:
-    python train.py [--config path/to/config.json]
+    python train_mmd.py [--config path/to/config.json]
 """
 
 import argparse
@@ -24,17 +20,16 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 from src.data_preprocessing import VADataPreprocessor
-from src.models.dann import DANN
+from src.models.mmd_model import MMDModel
 from src.validation import EmbeddingValidator, TransferValidator
 from src.utils import (
-    set_seed, get_alpha_schedule, CheckpointManager,
-    EarlyStopping, ExperimentLogger, count_parameters,
-    print_metrics, get_device, AverageMeter
+    set_seed, CheckpointManager, EarlyStopping, ExperimentLogger,
+    count_parameters, print_metrics, get_device, AverageMeter
 )
 
 
-class DANNTrainer:
-    """Trainer for Domain-Adversarial Neural Network."""
+class MMDTrainer:
+    """Trainer for MMD-based domain adaptation."""
 
     def __init__(self, config):
         """
@@ -99,11 +94,11 @@ class DANNTrainer:
     def setup_model(self):
         """Initialize model, optimizer, and training components."""
         print("\n" + "="*80)
-        print("SETTING UP MODEL")
+        print("SETTING UP MMD MODEL")
         print("="*80)
 
         # Create model
-        self.model = DANN(
+        self.model = MMDModel(
             iv5_dim=self.feature_dims['iv5'],
             phmrc_dim=self.feature_dims['phmrc'],
             num_classes=len(self.class_names),
@@ -111,7 +106,7 @@ class DANNTrainer:
             encoder_output=self.config['encoder_output'],
             embedding_dim=self.config['embedding_dim'],
             dropout=self.config['dropout'],
-            lambda_domain=self.config['lambda_domain']
+            kernel_sigmas=self.config.get('kernel_sigmas', None)
         ).to(self.device)
 
         # Print model info
@@ -135,68 +130,50 @@ class DANNTrainer:
 
         # Setup checkpoint manager
         self.checkpoint_mgr = CheckpointManager(
-            save_dir=os.path.join(self.config['save_dir'], 'checkpoints'),
-            mode='max'  # Maximize validation accuracy
+            save_dir=os.path.join(self.config['save_dir'], 'checkpoints_mmd'),
+            mode='max'
         )
 
         # Setup early stopping
         self.early_stopping = EarlyStopping(
             patience=self.config['patience'],
-            mode='max',  # Maximize validation accuracy
+            mode='max',
             min_delta=0.001
         )
 
         # Setup experiment logger
         self.logger = ExperimentLogger(
             log_dir=self.config['save_dir'],
-            experiment_name=self.config.get('experiment_name')
+            experiment_name=self.config.get('experiment_name', 'mmd_experiment')
         )
         self.logger.log_config(self.config)
 
         print("Model setup complete!")
 
     def train_epoch(self, epoch):
-        """
-        Train for one epoch.
-
-        Args:
-            epoch: Current epoch number
-
-        Returns:
-            Dictionary of training metrics
-        """
+        """Train for one epoch."""
         self.model.train()
-
-        # Compute alpha for domain adaptation
-        alpha = get_alpha_schedule(
-            epoch,
-            self.config['num_epochs'],
-            schedule_type=self.config['alpha_schedule']
-        )
 
         # Loss functions
         classification_loss_fn = nn.CrossEntropyLoss()
-        domain_loss_fn = nn.CrossEntropyLoss()
 
         # Metrics
         class_loss_meter = AverageMeter()
-        domain_loss_meter = AverageMeter()
+        mmd_loss_meter = AverageMeter()
         total_loss_meter = AverageMeter()
         class_acc_meter = AverageMeter()
-        domain_acc_meter = AverageMeter()
 
-        # Get iterators for both datasets
+        # Get iterators
         iv5_iter = iter(self.dataloaders['iv5']['train'])
         phmrc_iter = iter(self.dataloaders['phmrc']['train'])
 
-        # Determine number of batches (use the smaller dataset)
         num_batches = min(
             len(self.dataloaders['iv5']['train']),
             len(self.dataloaders['phmrc']['train'])
         )
 
         for batch_idx in range(num_batches):
-            # Get batches from both datasets
+            # Get batches
             try:
                 iv5_batch = next(iv5_iter)
             except StopIteration:
@@ -216,18 +193,11 @@ class DANNTrainer:
             phmrc_features = phmrc_batch['features'].to(self.device)
             phmrc_labels = phmrc_batch['label'].to(self.device)
 
-            # Create domain labels
-            batch_size = len(iv5_features) + len(phmrc_features)
-            domain_labels = torch.cat([
-                torch.zeros(len(iv5_features), dtype=torch.long),  # IV5 = 0
-                torch.ones(len(phmrc_features), dtype=torch.long)  # PHMRC = 1
-            ]).to(self.device)
-
             # Forward pass
             output = self.model(
                 iv5_features=iv5_features,
                 phmrc_features=phmrc_features,
-                alpha=alpha
+                compute_mmd=True
             )
 
             # Combine labels
@@ -235,12 +205,12 @@ class DANNTrainer:
 
             # Compute losses
             class_loss = classification_loss_fn(output['class_logits'], all_labels)
-            domain_loss = domain_loss_fn(output['domain_logits'], domain_labels)
+            mmd_loss = output['mmd_loss']
 
-            # Total loss: classification + domain adaptation
+            # Total loss: classification + MMD
             total_loss = (
                 self.config['lambda_cls'] * class_loss +
-                self.config['lambda_adv'] * domain_loss
+                self.config['lambda_mmd'] * mmd_loss
             )
 
             # Backward pass
@@ -248,46 +218,34 @@ class DANNTrainer:
             total_loss.backward()
             self.optimizer.step()
 
-            # Compute accuracies
+            # Compute accuracy
             class_preds = torch.argmax(output['class_logits'], dim=1)
             class_acc = (class_preds == all_labels).float().mean()
 
-            domain_preds = torch.argmax(output['domain_logits'], dim=1)
-            domain_acc = (domain_preds == domain_labels).float().mean()
-
             # Update meters
+            batch_size = len(iv5_features) + len(phmrc_features)
             class_loss_meter.update(class_loss.item(), batch_size)
-            domain_loss_meter.update(domain_loss.item(), batch_size)
+            mmd_loss_meter.update(mmd_loss.item(), batch_size)
             total_loss_meter.update(total_loss.item(), batch_size)
             class_acc_meter.update(class_acc.item(), batch_size)
-            domain_acc_meter.update(domain_acc.item(), batch_size)
 
             # Print progress
             if (batch_idx + 1) % self.config.get('print_freq', 10) == 0:
                 print(f"  Batch [{batch_idx+1}/{num_batches}] "
                       f"Loss: {total_loss_meter.avg:.4f} "
-                      f"(cls: {class_loss_meter.avg:.4f}, dom: {domain_loss_meter.avg:.4f}) "
-                      f"Acc: {class_acc_meter.avg:.4f} "
-                      f"DomAcc: {domain_acc_meter.avg:.4f} "
-                      f"Alpha: {alpha:.3f}")
+                      f"(cls: {class_loss_meter.avg:.4f}, mmd: {mmd_loss_meter.avg:.4f}) "
+                      f"Acc: {class_acc_meter.avg:.4f}")
 
         return {
             'class_loss': class_loss_meter.avg,
-            'domain_loss': domain_loss_meter.avg,
+            'mmd_loss': mmd_loss_meter.avg,
             'total_loss': total_loss_meter.avg,
             'class_acc': class_acc_meter.avg,
-            'domain_acc': domain_acc_meter.avg,
-            'alpha': alpha,
             'lr': self.optimizer.param_groups[0]['lr']
         }
 
     def validate_epoch(self):
-        """
-        Validate on validation sets.
-
-        Returns:
-            Dictionary of validation metrics
-        """
+        """Validate on validation sets."""
         self.model.eval()
 
         metrics = {}
@@ -324,7 +282,7 @@ class DANNTrainer:
     def train(self):
         """Main training loop."""
         print("\n" + "="*80)
-        print("STARTING TRAINING")
+        print("STARTING TRAINING (MMD)")
         print("="*80)
 
         for epoch in range(self.config['num_epochs']):
@@ -370,111 +328,10 @@ class DANNTrainer:
         print("TRAINING COMPLETE")
         print("="*80)
 
-    def evaluate(self):
-        """Final evaluation on test sets."""
-        print("\n" + "="*80)
-        print("FINAL EVALUATION")
-        print("="*80)
-
-        # Load best model
-        print("\nLoading best model...")
-        self.checkpoint_mgr.load_checkpoint(self.model)
-
-        # Create validators
-        embedding_validator = EmbeddingValidator(
-            self.model, self.device, self.class_names
-        )
-
-        transfer_validator = TransferValidator(
-            self.model, self.device, self.class_names
-        )
-
-        # 1. Embedding quality evaluation
-        print("\n" + "="*80)
-        print("EMBEDDING QUALITY EVALUATION")
-        print("="*80)
-
-        embedding_metrics = embedding_validator.evaluate_embedding_quality(
-            self.dataloaders['iv5']['test'],
-            self.dataloaders['phmrc']['test']
-        )
-
-        # Visualize embeddings
-        print("\nGenerating embedding visualizations...")
-        fig = embedding_validator.visualize_embeddings(
-            [embedding_metrics['iv5_data'], embedding_metrics['phmrc_data']],
-            save_path=os.path.join(self.config['save_dir'], 'embeddings_tsne.png'),
-            method='tsne'
-        )
-
-        # 2. Cross-dataset transfer evaluation
-        print("\n" + "="*80)
-        print("CROSS-DATASET TRANSFER EVALUATION")
-        print("="*80)
-
-        # IV5 → PHMRC
-        iv5_to_phmrc = transfer_validator.evaluate_transfer(
-            self.dataloaders['iv5']['test'],
-            self.dataloaders['phmrc']['test'],
-            'IV5', 'PHMRC'
-        )
-
-        # PHMRC → IV5
-        phmrc_to_iv5 = transfer_validator.evaluate_transfer(
-            self.dataloaders['phmrc']['test'],
-            self.dataloaders['iv5']['test'],
-            'PHMRC', 'IV5'
-        )
-
-        # Plot confusion matrices
-        transfer_validator.plot_confusion_matrix(
-            iv5_to_phmrc['confusion_matrix'],
-            save_path=os.path.join(self.config['save_dir'], 'cm_iv5_to_phmrc.png')
-        )
-
-        transfer_validator.plot_confusion_matrix(
-            phmrc_to_iv5['confusion_matrix'],
-            save_path=os.path.join(self.config['save_dir'], 'cm_phmrc_to_iv5.png')
-        )
-
-        # 3. Log final results
-        final_results = {
-            'embedding_quality': {
-                'silhouette_score': embedding_metrics['silhouette_score'],
-                'nn_purity': embedding_metrics['nn_purity'],
-                'cross_dataset_nn_agreement': embedding_metrics['cross_dataset_nn_agreement'],
-                'domain_classification_acc': embedding_metrics['domain_classification_acc']
-            },
-            'transfer_iv5_to_phmrc': {
-                'accuracy': iv5_to_phmrc['accuracy'],
-                'macro_f1': iv5_to_phmrc['macro_f1'],
-                'weighted_f1': iv5_to_phmrc['weighted_f1']
-            },
-            'transfer_phmrc_to_iv5': {
-                'accuracy': phmrc_to_iv5['accuracy'],
-                'macro_f1': phmrc_to_iv5['macro_f1'],
-                'weighted_f1': phmrc_to_iv5['weighted_f1']
-            }
-        }
-
-        self.logger.log_final_results(final_results)
-
-        print("\n" + "="*80)
-        print("FINAL RESULTS SUMMARY")
-        print("="*80)
-        print("\nEmbedding Quality:")
-        print_metrics(final_results['embedding_quality'], prefix='  ')
-        print("\nTransfer (IV5 → PHMRC):")
-        print_metrics(final_results['transfer_iv5_to_phmrc'], prefix='  ')
-        print("\nTransfer (PHMRC → IV5):")
-        print_metrics(final_results['transfer_phmrc_to_iv5'], prefix='  ')
-
-        return final_results
-
 
 def main():
     """Main training function."""
-    # Default configuration
+    # Default configuration for MMD
     config = {
         # Data
         'iv5_path': 'data/IV5_child_8categories.csv',
@@ -482,27 +339,26 @@ def main():
         'test_size': 0.15,
         'val_size': 0.15,
 
-        # Model architecture (REDUCED to prevent overfitting)
-        'encoder_hidden': 128,  # Was: 256
-        'encoder_output': 64,   # Was: 128
-        'embedding_dim': 32,    # Was: 64
-        'dropout': 0.5,         # Was: 0.3 (INCREASED for stronger regularization)
+        # Model architecture (same as high regularization)
+        'encoder_hidden': 128,
+        'encoder_output': 64,
+        'embedding_dim': 32,
+        'dropout': 0.5,
+        'kernel_sigmas': [0.01, 0.1, 1, 10, 100],  # MMD kernel bandwidths
 
         # Training
         'batch_size': 32,
-        'num_epochs': 150,      # Was: 100 (increased for smaller model)
+        'num_epochs': 150,
         'learning_rate': 0.001,
-        'weight_decay': 0.001,  # Was: 0.0001 (INCREASED 10x for regularization)
+        'weight_decay': 0.001,
         'use_balanced_sampling': True,
 
-        # Domain adaptation
+        # Domain adaptation (MMD instead of adversarial)
         'lambda_cls': 1.0,
-        'lambda_adv': 3.0,      # Was: 1.0 (INCREASED for stronger domain invariance)
-        'lambda_domain': 1.0,
-        'alpha_schedule': 'exp',  # 'linear', 'exp', or 'const'
+        'lambda_mmd': 1.0,  # MMD loss weight
 
         # Regularization
-        'patience': 20,         # Was: 15 (increased patience for smaller model)
+        'patience': 20,
 
         # System
         'seed': 42,
@@ -511,11 +367,11 @@ def main():
 
         # Logging
         'save_dir': 'results',
-        'experiment_name': None
+        'experiment_name': 'mmd_model_v1'
     }
 
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Train DANN for VA cross-dataset classification')
+    parser = argparse.ArgumentParser(description='Train MMD model for VA cross-dataset classification')
     parser.add_argument('--config', type=str, help='Path to config JSON file')
     args = parser.parse_args()
 
@@ -526,7 +382,7 @@ def main():
             config.update(json.load(f))
 
     # Create trainer
-    trainer = DANNTrainer(config)
+    trainer = MMDTrainer(config)
 
     # Setup
     trainer.setup_data()
@@ -534,9 +390,6 @@ def main():
 
     # Train
     trainer.train()
-
-    # Evaluate
-    results = trainer.evaluate()
 
     print("\n" + "="*80)
     print("ALL DONE!")
