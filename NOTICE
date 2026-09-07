@@ -1,0 +1,18 @@
+DANN shared embedding space for cross-dataset verbal autopsy classification
+Copyright 2025 Chunyi Liu
+Johns Hopkins University
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This repository is an overlay on, and is designed to be used with, the
+following components, which are NOT covered by this repository's LICENSE
+and which retain their own licenses and copyright:
+
+* openVA (https://github.com/verbal-autopsy-software/openVA), included as the
+  git submodule `openva/`. Referenced, not copied or modified.
+
+* va-data (https://github.com/JH-DSAI/va-data), included as the git submodule
+  `va-data/`. Referenced, not copied or modified.
+
+The Apache-2.0 license in this repository applies only to the files tracked
+directly in this repository, not to the contents of the submodules above.
