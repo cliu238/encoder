@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "DANN shared embedding space for cross-dataset verbal autopsy classification"
+abstract: >-
+  Domain-adversarial (DANN) training of a shared embedding space for
+  cause-of-death classification from WHO-standardized verbal autopsy data
+  across datasets, with evaluation and comparison tooling.
+authors:
+  - family-names: Liu
+    given-names: Chunyi
+    affiliation: Johns Hopkins University
+    orcid: "https://orcid.org/0009-0003-1034-6670"
+repository-code: "https://github.com/cliu238/encoder"
+license: Apache-2.0
+version: 1.0.0
+date-released: 2026-09-07
